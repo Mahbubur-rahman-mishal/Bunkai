@@ -1,0 +1,351 @@
+# Bunkai (分解) — Product Requirements Document
+ 
+**Japanese Text → Vocabulary & Grammar Extraction → Anki SRS Cards**
+ 
+---
+ 
+**Version:** 1.0  
+**Date:** March 2026  
+**Author:** Mishal  
+**Platform:** Claude Artifact (React) / Self-hosted (Vercel)  
+**Status:** In Development  
+**Tagline:** 日本語を解かす — Dissolving Japanese into understanding
+ 
+---
+ 
+## 1. Product Overview
+ 
+Bunkai is a web-based Japanese language learning tool designed for professionals working in Japanese-speaking companies who can speak conversational Japanese but struggle to read kanji. It extracts vocabulary, grammar patterns, and key sentences from real workplace text (emails, chat messages, meeting notes) and converts them into structured Anki flashcards for spaced repetition study.
+ 
+**Target User:** Non-native Japanese speakers (N3–N2 speaking level, N5 kanji reading level) working in Japanese corporate environments.
+ 
+**Core Problem:** The friction between encountering unfamiliar Japanese text at work and actively learning that vocabulary is too high. Users procrastinate because the manual process of looking up words, creating flashcards, and maintaining a study routine is tedious.
+ 
+**Solution:** Reduce the learning pipeline to a single paste action. Text goes in, structured learning cards come out, ready for Anki import.
+ 
+---
+ 
+## 2. Technical Architecture
+ 
+### 2.1 Two-Step Processing Pipeline
+ 
+The system uses a two-step architecture to balance extraction completeness with enrichment depth.
+ 
+#### Step 1: Extract (Lightweight, High Coverage)
+ 
+- Single API call per text chunk (or single call for texts under 1,500 characters)
+- Extracts ALL kanji words, ALL grammar patterns (every JLPT level), and 3–5 key sentences
+- Compact output format: word, reading, meaning, JLPT level only
+- No item cap — extracts everything found in the text
+- Long texts are automatically chunked (~500 characters per chunk) and processed in parallel
+- Results are deduplicated and merged across chunks
+ 
+#### Step 2: Enrich (On-Demand, Per Item)
+ 
+Enrichment is triggered by user interaction — clicking on a specific vocabulary word or sentence:
+ 
+- **Vocabulary Enrichment:** Fetches 2–4 synonyms with nuance explanations, an example sentence with furigana, and a one-sentence nuance comparison tip.
+- **Sentence Enrichment:** Generates full furigana annotation for every kanji, natural English translation, and highlights 3–6 key vocabulary words from the sentence.
+ 
+This architecture ensures no vocabulary is missed during extraction (since the prompt is lightweight), while enrichment depth is unlimited (since it processes one item at a time and never truncates).
+ 
+### 2.2 Text Chunking Strategy
+ 
+- Splits on Japanese sentence endings (。！？), newlines, and periods
+- Target chunk size: ~500 characters
+- Chunks processed in batches of 3 (parallel)
+- Results merged with deduplication by word/title/sentence
+ 
+### 2.3 LLM Integration
+ 
+| Call Type | Purpose | Model | Max Tokens |
+|-----------|---------|-------|------------|
+| Extract | Full vocab/grammar/sentence extraction | claude-sonnet-4 | 4,096 |
+| Enrich Vocab | Synonyms, nuance, example | claude-sonnet-4 | 1,024 |
+| Enrich Sentence | Furigana, translation, key vocab | claude-sonnet-4 | 1,024 |
+ 
+### 2.4 Error Handling & Observability
+ 
+- Every API call is wrapped in granular try-catch with step-by-step logging
+- Debug log panel visible in the UI — shows request building, fetch status, response parsing, JSON repair attempts
+- 60-second timeout with AbortController on extraction calls
+- 45-second timeout on enrichment calls
+- Automatic JSON repair for truncated responses (bracket closing, regex extraction of complete objects)
+- Elapsed timer visible during loading
+- Error/success lines color-coded in debug log (red/green)
+ 
+---
+ 
+## 3. Feature Specification
+ 
+### 3.1 Text Extraction
+ 
+| Feature | Description |
+|---------|-------------|
+| Paste & Extract | User pastes Japanese text (email, chat, meeting notes) into a textarea. One-click or Cmd/Ctrl+Enter triggers extraction. |
+| Auto-Chunking | Texts >1,500 chars are automatically split by sentence boundaries into ~500-char chunks. Chunk count displayed in UI hint. |
+| Parallel Processing | Chunks are processed 3 at a time via Promise.allSettled. Partial failures don't block successful chunks. |
+| Deduplication | Merged results are deduplicated by word (vocab), title (grammar), and original text (sentences). |
+| JLPT Sorting | All extracted items are sorted by JLPT level: N5 → N4 → N3 → N2 → N1 → biz → other. Foundational words appear first. |
+| Selection | All items are pre-selected by default. Known words are auto-deselected. Users can toggle individual items. |
+ 
+### 3.2 Vocabulary Cards
+ 
+#### Extracted Fields (Step 1)
+ 
+- Word (kanji as-is from source text)
+- Reading (full hiragana)
+- Meaning (English, 2–5 words, work-context relevant)
+- JLPT Level (N5, N4, N3, N2, N1, biz, other)
+ 
+#### Enriched Fields (Step 2, On-Demand)
+ 
+- 2–4 synonyms, each with: word, reading, meaning, JLPT level, nuance note (3–6 words)
+- Example sentence from context with furigana on every kanji
+- Nuance comparison tip (1 sentence comparing when to use each synonym)
+- Synonyms that are in the user's Known Words list are tagged "known"
+ 
+#### Card Display Behavior
+ 
+- Known words are visually dimmed (opacity 0.7) with "known" tag
+- Click card body to toggle selection
+- Click "Load synonyms" to trigger enrichment API call
+- Click "Hide synonyms" to collapse enriched content
+- Error state shown inline if enrichment fails
+ 
+### 3.3 Grammar Cards
+ 
+#### Extracted Fields
+ 
+- Title (grammar pattern, e.g. ～に伴い)
+- Explanation (when/how to use, 1 sentence)
+- Example sentence with furigana
+- JLPT Level (all levels including non-JLPT/business patterns)
+ 
+#### Coverage Rules
+ 
+- Extracts ALL grammar patterns at every level (N5 through N1)
+- Includes business-specific patterns (keigo, email conventions)
+- Includes non-JLPT colloquial patterns
+- Basic particles (は, が, の, で, に, を, です, ます) are skipped unless they form part of a grammar pattern
+ 
+### 3.4 Sentence Cards
+ 
+Sentence cards train the user to parse real Japanese text in context — the skill gap between knowing isolated vocabulary and reading actual workplace emails.
+ 
+#### Auto-Suggested Sentences
+ 
+- During extraction, the LLM picks 3–5 most useful/representative full sentences from the source text
+- Sentences are automatically selected for inclusion in the deck
+ 
+#### Manual Sentence Addition
+ 
+- Input field below the sentence section allows pasting custom sentences
+- Added sentences appear immediately in the extraction results
+- Custom sentences can also be enriched on-demand
+ 
+#### Enriched Fields (On-Demand)
+ 
+- **Furigana:** Full sentence rewritten with furigana in parentheses after every kanji compound
+- **English:** Natural translation (not word-by-word)
+- **Key Vocab:** 3–6 most important/difficult words highlighted as chips with reading and meaning
+ 
+#### Anki Card Format
+ 
+- Front: Original kanji sentence (challenges the user to read it)
+- Back: Furigana version + English translation + key vocab highlighted
+- Tagged as "sentence" in TSV export
+ 
+### 3.5 Known Words System
+ 
+The Known Words system prevents redundant card creation by tracking vocabulary the user has already learned.
+ 
+#### Import from Anki
+ 
+- User exports existing Anki cards (Browse → select → Export Notes)
+- Paste the export text into the Known Words import textarea
+- Flexible parser handles: one word per line, TSV, CSV, numbered lists, Anki export format
+- Auto-strips readings in parentheses, numbering prefixes, emoji/bullet prefixes
+- Live preview shows "~47 words detected" before import
+ 
+#### Auto-Tracking
+ 
+- Every vocabulary word added to the Deck via "Add to Deck" is automatically added to the Known Words set
+- No manual action required — the system learns what you've studied over time
+ 
+#### Extraction Behavior
+ 
+- Known words are auto-deselected (not checked by default)
+- Known words are visually dimmed with an "already known" tag
+- Summary bar shows: "12 new · 5 already known"
+- Toggle checkbox: "Hide known" to show only new vocabulary
+- Synonyms within enrichment that match known words show a "known" badge
+ 
+#### Known Words Management
+ 
+- Dedicated "Known" tab showing all tracked words as chips
+- Alphabetically sorted display
+- Individual removal (click × on any chip)
+- Bulk clear option
+- Persistent storage across sessions
+ 
+### 3.6 Deck Management
+ 
+| Feature | Description |
+|---------|-------------|
+| Add to Deck | Adds all selected vocab, grammar, and sentence cards. Enrichment data (synonyms, nuance tips, furigana) is baked into cards if loaded. |
+| Deduplication | Cards already in the deck (matched by word/title/sentence) are skipped with count shown. |
+| Deck Stats | Header shows: N vocab · N grammar · N sentences. |
+| Card Removal | Individual card removal via × button. |
+| Clear All | Removes all cards from deck with confirmation toast. |
+| Persistent Storage | Deck and Known Words saved via window.storage API, persists across sessions. |
+ 
+### 3.7 Anki Export
+ 
+#### TSV Format
+ 
+Export generates a tab-separated values file compatible with Anki's import function:
+ 
+- Column 1 (Front): Word with reading / grammar pattern / original sentence
+- Column 2 (Back): Meaning, example, synonyms, nuance tip, furigana, English translation, key vocab — all included
+- Column 3 (Tags): "vocab", "grammar", or "sentence"
+ 
+#### Export Method
+ 
+- Primary: Clipboard copy (navigator.clipboard.writeText)
+- Fallback: Modal with textarea for manual select-all + copy
+ 
+#### Import Instructions
+ 
+Anki: File → Import → select .tsv file → set separator to Tab → map 3 columns: Front / Back / Tags.
+ 
+---
+ 
+## 4. User Interface
+ 
+### 4.1 Navigation
+ 
+Three-tab layout with badge counts:
+ 
+- **Extract** — Main workspace for text input, extraction, and enrichment
+- **Deck (N)** — Card collection management and export
+- **Known (N)** — Known words import and management
+ 
+### 4.2 Visual Design System
+ 
+| Element | Style | Purpose |
+|---------|-------|---------|
+| Vocab Cards | Green border (#2c4a3e), warm bg | Full-width, expandable synonyms |
+| Grammar Cards | Purple border (#5a4a6e) | Grid layout, 280px min width |
+| Sentence Cards | Blue border (#4a5a7e) | Full-width, expandable breakdown |
+| Known Words | Muted (#f0ece0) chips | Compact, individually removable |
+| JLPT Badges | Color-coded by level | N5=green, N4=blue, N3=purple, N2=pink, N1=orange |
+| Debug Log | Dark terminal (#111), monospace | Color-coded: green=success, red=error, blue=info |
+ 
+### 4.3 Loading States
+ 
+- Spinner animation with cycling status messages (every 3 seconds)
+- Elapsed time counter (seconds)
+- Warning message after 30 seconds
+- Debug log visible inline during loading
+- Progress bar for multi-chunk processing
+ 
+### 4.4 Feedback & Toasts
+ 
+- Toast notifications for: card additions, exports, imports, errors
+- Auto-dismiss after 2.5 seconds
+- Inline error messages for API failures and JSON parse errors
+ 
+---
+ 
+## 5. Data Model
+ 
+### 5.1 Vocabulary Card
+ 
+| Field | Type | Source | Description |
+|-------|------|--------|-------------|
+| word | string | Extract | Kanji word as-is |
+| reading | string | Extract | Full hiragana |
+| meaning | string | Extract | English (2-5 words) |
+| level | enum | Extract | N5/N4/N3/N2/N1/biz/other |
+| example | string | Enrich | Sentence with furigana |
+| synonyms[] | array | Enrich | 2-4 synonyms with nuance |
+| nuanceTip | string | Enrich | Usage comparison sentence |
+ 
+### 5.2 Grammar Card
+ 
+| Field | Type | Description |
+|-------|------|-------------|
+| title | string | Grammar pattern (e.g. ～に伴い) |
+| explanation | string | When/how to use (1 sentence) |
+| example | string | Example with furigana |
+| level | string | JLPT level or biz/other |
+ 
+### 5.3 Sentence Card
+ 
+| Field | Type | Description |
+|-------|------|-------------|
+| original | string | Original sentence from source text |
+| furigana | string | Sentence with furigana on all kanji (Enrich) |
+| english | string | Natural English translation (Enrich) |
+| keyVocab[] | array | 3-6 key words with reading + meaning (Enrich) |
+ 
+### 5.4 Persistence
+ 
+- Deck cards stored under key "anki-deck-v7" via window.storage API
+- Known words stored under key "anki-known-v1" as JSON array
+- Both persist across browser sessions
+- Storage operations wrapped in try-catch (graceful degradation if unavailable)
+ 
+---
+ 
+## 6. Known Constraints & Open Issues
+ 
+### 6.1 Artifact Sandbox Limitations
+ 
+- Outbound fetch() calls to external APIs (including api.anthropic.com) appear to be blocked by the Claude artifact sandbox. This is the primary blocker for the direct API integration approach.
+- navigator.clipboard.writeText() may fail silently in some contexts; fallback modal provided.
+- sendPrompt() global function is not available in all artifact contexts.
+- File downloads (Blob URLs) are blocked; export uses clipboard copy instead.
+- localStorage/sessionStorage are not available; window.storage API used instead.
+ 
+### 6.2 Workaround Options
+ 
+1. **Chat Bridge Pattern:** User copies a prompt from the artifact, pastes in chat, Claude responds with JSON, user copies JSON back into the artifact. Works but adds friction.
+2. **Self-Hosted Deployment:** Deploy as standalone React app on Vercel with BYOK (Bring Your Own Key) for Anthropic API. Removes all sandbox limitations.
+3. **Browser Extension Bridge:** Extension intercepts requests from the web app and routes through logged-in Claude/ChatGPT session. Technically feasible but high complexity.
+ 
+### 6.3 Future Considerations
+ 
+- **AnkiConnect Integration:** Anki plugin exposes localhost:8765 API for direct card push. Requires self-hosted deployment (not possible from artifact sandbox).
+- **APKG File Generation:** Native Anki import format via SQLite-in-WASM. Heavy but eliminates manual import step.
+- **Offline LLM:** Ollama integration for completely free, offline processing. No API key needed.
+ 
+---
+ 
+## 7. Primary User Flow
+ 
+1. User receives a Japanese email or chat message at work.
+2. Opens Bunkai, pastes the text, clicks Extract.
+3. System extracts all vocabulary (sorted N5→N1), grammar patterns, and key sentences.
+4. Known words are auto-dimmed and deselected. User sees "12 new · 5 known" summary.
+5. User clicks "Load synonyms" on unfamiliar words to see related vocabulary with nuance tips.
+6. User clicks "Load furigana" on interesting sentences to see full breakdown.
+7. User optionally adds custom sentences from the same conversation.
+8. User clicks "Add to Deck". New words are auto-tracked as Known.
+9. User clicks "Export TSV", pastes into a .tsv file, imports into Anki.
+10. User reviews cards in Anki using spaced repetition.
+ 
+This flow can be repeated multiple times per day with near-zero friction — each iteration takes 30–60 seconds of active user time.
+ 
+---
+ 
+## 8. Success Metrics
+ 
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Time to create cards | < 60 seconds per text | Paste to Add to Deck |
+| Vocabulary coverage | 100% of kanji words extracted | No missed words per chunk |
+| Daily usage | 3-5 texts processed per day | Deck growth rate |
+| Known words growth | 50+ words/month | Known Words count |
+| JLPT reading level | N3 → N2 within 6 months | JLPT N2 exam (mid-2026) |
